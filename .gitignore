@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Django
+*.log
+*.pot
+*.mo
+*.qm
+db.sqlite3
+media/
+static/
+
+# Virtual Environment
+venv/
+.env
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Excel files (if you don't want to commit them)
+*.xlsx
