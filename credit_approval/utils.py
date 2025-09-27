@@ -9,30 +9,30 @@ def calculate_credit_score(customer_id):
 
     credit_score = 0
 
-    # Factor 1: Past loans paid on time
-    # Assuming 'emis_paid_on_time' refers to all EMIs for a loan, and 'tenure' is total EMIs
-    on_time_payments = loans.filter(emis_paid_on_time__gte=F('tenure')).count()
-    total_paid_loans = loans.filter(loan_status='Paid').count()
+    # Factor 1: Good payment behavior (modified for more granularity)
+    # Give points for loans with some on-time payments, not just fully paid
+    loans_with_some_on_time_payments = loans.filter(emis_paid_on_time__gt=0).count()
+    total_active_or_paid_loans = loans.filter(loan_status__in=['Approved', 'Running', 'Paid']).count()
     
-    if total_paid_loans > 0:
-        # Simple ratio for now, can be made more complex
-        credit_score += (on_time_payments / total_paid_loans) * 10 # Max 10 points
-
-    # Factor 2: Number of loans taken in the past (active loans)
+    if total_active_or_paid_loans > 0:
+        # Give up to 20 points based on the ratio of loans with some on-time payments
+        credit_score += (loans_with_some_on_time_payments / total_active_or_paid_loans) * 20
+    
+    # Existing Factor 2: Number of loans taken in the past (active loans)
     active_loans_count = loans.filter(loan_status__in=['Approved', 'Running']).count()
     credit_score += min(active_loans_count * 5, 20) # Max 20 points for up to 4 loans
 
-    # Factor 3: Loan activity in the current year
+    # Existing Factor 3: Loan activity in the current year
     current_year = date.today().year
     current_year_loans = loans.filter(date_approved__year=current_year).count()
-    credit_score += min(current_year_loans * 7, 25) # Max 25 points for up to ~3-4 loans
+    credit_score += min(current_year_loans * 7, 25) # Max 25 points
 
-    # Factor 4: Total volume of loans approved
+    # Existing Factor 4: Total volume of loans approved
     total_approved_volume = loans.filter(loan_status__in=['Approved', 'Running']).aggregate(sum_amount=models.Sum('loan_amount'))['sum_amount'] or 0
     if total_approved_volume > 0:
         credit_score += min(total_approved_volume / 100000, 20) # Max 20 points for every 1 lakh of loan volume
 
-    # Additional Check: If sum of current loans > approved_limit, credit score is 0
+    # Existing Additional Check: If sum of current loans > approved_limit, credit score is 0
     total_current_loan_amount = loans.filter(loan_status__in=['Approved', 'Running']).aggregate(sum_amount=models.Sum('loan_amount'))['sum_amount'] or 0
     if total_current_loan_amount > customer.approved_limit:
         credit_score = 0

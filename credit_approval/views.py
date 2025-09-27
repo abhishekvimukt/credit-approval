@@ -55,12 +55,36 @@ class CheckEligibilityViewSet(viewsets.ViewSet):
             # Calculate credit score
             credit_score = calculate_credit_score(customer_id)
             
-            # Check loan approval criteria based on credit score
             approval = False
             corrected_interest_rate = None
             min_interest_rate = 0.0
 
-            if credit_score > 50:
+            # --- NEW LOGIC FOR FIRST-TIME APPLICANTS (Credit Score 0) ---
+            if credit_score == 0:
+                # For first-time applicants, check if monthly salary is above a threshold
+                # and if proposed EMI is within 50% of monthly salary
+                # Let's set a threshold, e.g., monthly_salary > 40000
+                if customer.monthly_salary > 40000: # Example threshold
+                    proposed_emi = calculate_emi(loan_amount, interest_rate, tenure)
+                    max_allowed_emi = 0.50 * customer.monthly_salary
+                    if proposed_emi <= max_allowed_emi:
+                        approval = True
+                        # For first-time applicants, set a slightly higher minimum interest rate if not already high
+                        if interest_rate < 10.0: # Example minimum for first-timers
+                            corrected_interest_rate = 10.0
+                            approval = False # Initially false if rate too low, then re-check
+                        else:
+                            corrected_interest_rate = None # No correction needed if rate is already good
+                    else:
+                        approval = False
+                        corrected_interest_rate = None
+                else:
+                    approval = False
+                    corrected_interest_rate = None
+            # --- END NEW LOGIC ---
+
+            # Existing credit score based approval logic (only if credit_score > 0)
+            elif credit_score > 50:
                 approval = True
             elif 30 <= credit_score <= 50:
                 min_interest_rate = 12.0
@@ -74,25 +98,40 @@ class CheckEligibilityViewSet(viewsets.ViewSet):
                     approval = True
                 else:
                     corrected_interest_rate = 16.0
-            else: # credit_score < 10
+            else: # This block is now effectively for 0 < credit_score < 10 if not caught by special 0-score logic, but mostly covered
                 approval = False
+            
+            # Re-calculate proposed_emi considering potentially corrected interest rate if approval is still true
+            actual_interest_rate_for_emi = corrected_interest_rate if corrected_interest_rate and not approval else interest_rate
+            if not approval and corrected_interest_rate: # if not approved, but a rate was corrected, we need to show EMI for that corrected rate
+                monthly_installment_for_display = calculate_emi(loan_amount, corrected_interest_rate, tenure)
+            elif approval: # If approved, calculate EMI with current/corrected rate
+                monthly_installment_for_display = calculate_emi(loan_amount, actual_interest_rate_for_emi, tenure)
+            else: # Not approved, no corrected rate
+                monthly_installment_for_display = 0
+
 
             # Additional Check: Sum of current monthly EMIs exceeds 50% of monthly salary
-            # Sum of all current EMIs for the customer
             total_current_emi = Loan.objects.filter(customer=customer, loan_status__in=['Approved', 'Running']).aggregate(Sum('monthly_installment'))['monthly_installment__sum'] or 0
-            if (total_current_emi + calculate_emi(loan_amount, interest_rate, tenure)) > (0.50 * customer.monthly_salary):
+            # Use the actual interest rate that would be used for EMI calculation
+            final_interest_rate_for_check = corrected_interest_rate if corrected_interest_rate and not approval else interest_rate
+            
+            # Check with the proposed EMI (potentially corrected rate if it led to approval)
+            proposed_emi_for_dti_check = calculate_emi(loan_amount, final_interest_rate_for_check, tenure)
+            
+            if (total_current_emi + proposed_emi_for_dti_check) > (0.50 * customer.monthly_salary):
                 approval = False
                 corrected_interest_rate = None # Reset corrected rate if not approved due to EMI
-            
-            monthly_installment = calculate_emi(loan_amount, interest_rate, tenure) if approval else 0
+                monthly_installment_for_display = 0 # Reset EMI for display if rejected due to DTI
+
 
             response_data = {
                 'customer_id': customer_id,
                 'approval': approval,
-                'interest_rate': interest_rate,
+                'interest_rate': interest_rate, # Requested interest rate
                 'corrected_interest_rate': corrected_interest_rate,
                 'tenure': tenure,
-                'monthly_installment': monthly_installment
+                'monthly_installment': monthly_installment_for_display
             }
             return Response(response_data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
